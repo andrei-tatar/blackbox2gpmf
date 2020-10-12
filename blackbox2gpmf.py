@@ -18,7 +18,7 @@ fig, ax = plt.subplots()
 plt.subplots_adjust(bottom=0.25)
 fig.canvas.set_window_title('blackbox2gpmf by jaromeyer')
 
-gp_gyro, gp_offset, bbl_gyro, bbl_frame = [[]] * 4
+gp_gyro, gp_filtered, gp_offset, bbl_gyro, bbl_frame = [[]] * 5
 bbl_plot, gp_file, gp_offsets = [None] * 3
 
 
@@ -65,6 +65,47 @@ def load_gp(event):
         ax.plot([sample[0] for sample in gp_gyro], "g")
         plt.draw()
 
+def butter_lowpass(cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = signal.butter(order, normal_cutoff, btype='low', analog=False)
+    return b, a
+
+def butter_lowpass_filter(data, cutoff, fs, order=5):
+    b, a = butter_lowpass(cutoff, fs, order=order)
+    y = signal.lfilter(b, a, data)
+    return y
+
+def apply_filter(event):
+    global gp_gyro, gp_filtered
+
+    allX = []
+    allY = []
+    allZ = []
+
+    # Filter requirements.
+    order = 10
+    fs = 197      # sample rate, Hz
+    cutoff = 3    # desired cutoff frequency of the filter, Hz
+    
+    for sample in gp_gyro:
+        allX.append(sample[0]);
+        allY.append(sample[1]);
+        allZ.append(sample[2]);
+
+    filteredX = butter_lowpass_filter(allX, cutoff, fs, order)
+    filteredX = butter_lowpass_filter(filteredX[::-1], cutoff, fs, order)[::-1]
+    filteredY = butter_lowpass_filter(allY, cutoff, fs, order)
+    filteredY = butter_lowpass_filter(filteredY[::-1], cutoff, fs, order)[::-1]
+    filteredZ = butter_lowpass_filter(allZ, cutoff, fs, order)
+    filteredZ = butter_lowpass_filter(filteredZ[::-1], cutoff, fs, order)[::-1]
+    ax.plot(filteredX, "b")
+    i = 0
+    gp_filtered = []
+    while i < len(filteredX):
+        gp_filtered.append([filteredX[i], filteredY[i], filteredZ[i]])
+        i += 1
+    
 
 def load_bbl(event):
     global bbl_gyro
@@ -118,20 +159,20 @@ def load_bbl(event):
 
 def patch(event):
     # check if both gyros have been loaded
-    if len(gp_gyro) == 0 or len(bbl_gyro) == 0:
+    if len(gp_gyro) == 0 or len(gp_filtered) == 0:
         messagebox.showinfo(title="Error", message="Please load files first")
         return
 
     # generate and open output_file
-    output_file = gp_file[:-4] + "_bbl.MP4"
+    output_file = gp_file[:-4] + "_filtered.MP4"
     copyfile(gp_file, output_file)
     gp = open(output_file, "rb+")
 
     # loop over gp_offsets and write bbl_gyro
     for i, sample in enumerate(gp_offsets):
-        x = int(bbl_frame[i][0])
-        y = int(bbl_frame[i][1])
-        z = int(bbl_frame[i][2])
+        x = int(gp_filtered[i][0])
+        y = int(gp_filtered[i][1])
+        z = int(gp_filtered[i][2])
 
         gp.seek(sample)
         gp.write(x.to_bytes(2, byteorder='big', signed=True))
@@ -188,6 +229,10 @@ load_gp_button.on_clicked(load_gp)
 load_bbl_axis = plt.axes([0.65, 0.05, 0.125, 0.05])
 load_bbl_button = Button(load_bbl_axis, 'Load BBL')
 load_bbl_button.on_clicked(load_bbl)
+
+apply_filter_axis = plt.axes([0.35, 0.05, 0.125, 0.05])
+apply_filter_button = Button(apply_filter_axis, 'Apply Filter')
+apply_filter_button.on_clicked(apply_filter)
 
 patch_axis = plt.axes([0.8, 0.05, 0.1, 0.05])
 patch_btn = Button(patch_axis, 'Patch')
